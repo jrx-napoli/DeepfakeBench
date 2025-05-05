@@ -53,7 +53,6 @@ Original dataset structure before the preprocessing:
 We then additionally obtain "frames", "landmarks", and "mask" directories in same directory as the "videos" folder.
 """
 
-
 import os
 import sys
 import time
@@ -65,6 +64,7 @@ import datetime
 import glob
 import concurrent.futures
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 from pathlib import Path
 from imutils import face_utils
@@ -104,14 +104,14 @@ def create_logger(log_path):
 def get_keypts(image, face, predictor, face_detector):
     # detect the facial landmarks for the selected face
     shape = predictor(image, face)
-    
+
     # select the key points for the eyes, nose, and mouth
     leye = np.array([shape.part(37).x, shape.part(37).y]).reshape(-1, 2)
     reye = np.array([shape.part(44).x, shape.part(44).y]).reshape(-1, 2)
     nose = np.array([shape.part(30).x, shape.part(30).y]).reshape(-1, 2)
     lmouth = np.array([shape.part(49).x, shape.part(49).y]).reshape(-1, 2)
     rmouth = np.array([shape.part(55).x, shape.part(55).y]).reshape(-1, 2)
-    
+
     pts = np.concatenate([leye, reye, nose, lmouth, rmouth], axis=0)
 
     return pts
@@ -167,7 +167,7 @@ def extract_aligned_face_dlib(face_detector, predictor, image, res=256, mask=Non
 
         if outsize is not None:
             img = cv2.resize(img, (outsize[1], outsize[0]))
-        
+
         if mask is not None:
             mask = cv2.warpAffine(mask, M, (target_size[1], target_size[0]))
             mask = cv2.resize(mask, (outsize[1], outsize[0]))
@@ -186,14 +186,14 @@ def extract_aligned_face_dlib(face_detector, predictor, image, res=256, mask=Non
     if len(faces):
         # For now only take the biggest face
         face = max(faces, key=lambda rect: rect.width() * rect.height())
-        
+
         # Get the landmarks/parts for the face in box d only with the five key points
         landmarks = get_keypts(rgb, face, predictor, face_detector)
 
         # Align and crop the face
         cropped_face, mask_face = img_align_crop(rgb, landmarks, outsize=(res, res), mask=mask)
         cropped_face = cv2.cvtColor(cropped_face, cv2.COLOR_RGB2BGR)
-        
+
         # Extract the all landmarks from the aligned face
         face_align = face_detector(cropped_face, 1)
         if len(face_align) == 0:
@@ -202,18 +202,19 @@ def extract_aligned_face_dlib(face_detector, predictor, image, res=256, mask=Non
         landmark = face_utils.shape_to_np(landmark)
 
         return cropped_face, landmark, mask_face
-    
+
     else:
         return None, None, None
 
+
 def video_manipulate(
-    movie_path: Path,
-    mask_path: Path,
-    dataset_path: Path,
-    mode: str,
-    num_frames: int, 
-    stride: int, 
-    ) -> None:
+        movie_path: Path,
+        mask_path: Path,
+        dataset_path: Path,
+        mode: str,
+        num_frames: int,
+        stride: int,
+) -> None:
     """
     Processes a single video file by detecting and cropping the largest face in each frame and saving the results.
 
@@ -239,23 +240,23 @@ def video_manipulate(
         logger.error(f"Predictor path does not exist: {predictor_path}")
         sys.exit()
     face_predictor = dlib.shape_predictor(predictor_path)
-    
+
     def facecrop(
-        org_path: Path,
-        mask_path: Path, 
-        save_path: Path, 
-        mode: str,
-        num_frames: int, 
-        stride: int,
-        face_predictor: dlib.shape_predictor, 
-        face_detector: dlib.fhog_object_detector,
-        margin: float = 0.5, 
-        visualization: bool = False
-        ) -> None:
+            org_path: Path,
+            mask_path: Path,
+            save_path: Path,
+            mode: str,
+            num_frames: int,
+            stride: int,
+            face_predictor: dlib.shape_predictor,
+            face_detector: dlib.fhog_object_detector,
+            margin: float = 0.5,
+            visualization: bool = False
+    ) -> None:
         """
         Helper function for cropping face and extracting landmarks.
         """
-        
+
         # Open the video file
         assert org_path.exists(), f"Video file {org_path} does not exist."
         cap_org = cv2.VideoCapture(str(org_path))
@@ -268,7 +269,7 @@ def video_manipulate(
             if not cap_mask.isOpened():
                 logger.error(f"Failed to open {mask_path}")
                 return
-        
+
         # Get the number of frames in the video
         frame_count_org = int(cap_org.get(cv2.CAP_PROP_FRAME_COUNT))
 
@@ -293,7 +294,7 @@ def video_manipulate(
             if not ret_org:
                 logger.warning(f"Failed to read frame {cnt_frame} of {org_path}")
                 break
-            
+
             # Check if the mask was successfully read
             if mask_path is not None and not ret_mask:
                 logger.warning(f"Failed to read mask {cnt_frame} of {mask_path}")
@@ -304,15 +305,17 @@ def video_manipulate(
 
             # Use the function to extract the aligned and cropped face
             if mask_path is not None:
-                cropped_face, landmarks, masks = extract_aligned_face_dlib(face_detector, face_predictor, frame_org, mask=frame_mask)
+                cropped_face, landmarks, masks = extract_aligned_face_dlib(face_detector, face_predictor, frame_org,
+                                                                           mask=frame_mask)
             else:
-                cropped_face, landmarks, _ = extract_aligned_face_dlib(face_detector, face_predictor, frame_org, mask=frame_mask)
-            
+                cropped_face, landmarks, _ = extract_aligned_face_dlib(face_detector, face_predictor, frame_org,
+                                                                       mask=frame_mask)
+
             # Check if a face was detected and cropped
             if cropped_face is None:
                 logger.warning(f"No faces in frame {cnt_frame} of {org_path}")
                 continue
-            
+
             # Check if the landmarks were detected
             if landmarks is None:
                 logger.warning(f"No landmarks in frame {cnt_frame} of {org_path}")
@@ -358,16 +361,16 @@ def preprocess(dataset_path, mask_path, mode, num_frames, stride, logger):
         logger.error(f"No videos found in {dataset_path}")
         sys.exit()
     logger.info(f"{len(movies_path_list)} videos found in {dataset_path}")
-    
+
     # Define paths to masks in dataset
     if mask_path is not None:
         masks_path_list = sorted([Path(p) for p in glob.glob(os.path.join(mask_path, '**/*.mp4'), recursive=True)])
         if len(masks_path_list) == 0:
             logger.error(f"No masks found in {mask_path}")
             # sys.exit()
-        logger.info(f"{len(masks_path_list)} masks found in {mask_path}")    
-    
-    # Start timer
+        logger.info(f"{len(masks_path_list)} masks found in {mask_path}")
+
+        # Start timer
     start_time = time.monotonic()
 
     # Define the number of processes based on CPU capabilities
@@ -388,13 +391,13 @@ def preprocess(dataset_path, mask_path, mode, num_frames, stride, logger):
             # Create a future for each video and submit it for processing
             futures.append(
                 executor.submit(
-                video_manipulate,
-                movie_path,
-                mask_path,
-                dataset_path,
-                mode,
-                num_frames,
-                stride,
+                    video_manipulate,
+                    movie_path,
+                    mask_path,
+                    dataset_path,
+                    mode,
+                    num_frames,
+                    stride,
                 )
             )
         # Wait for all futures to complete and log any errors
@@ -405,11 +408,12 @@ def preprocess(dataset_path, mask_path, mode, num_frames, stride, logger):
                 future.result()
             except Exception as e:
                 logger.error(f"Error processing video: {e}")
-            
+
         # End timer
         end_time = time.monotonic()
         duration_minutes = (end_time - start_time) / 60
         logger.info(f"Total time taken: {duration_minutes:.2f} minutes")
+
 
 if __name__ == '__main__':
     # from config.yaml load parameters
@@ -428,7 +432,7 @@ if __name__ == '__main__':
     mode = config['preprocess']['mode']['default']
     stride = config['preprocess']['stride']['default']
     num_frames = config['preprocess']['num_frames']['default']
-    
+
     # use dataset_name and dataset_root_path to get dataset_path
     dataset_path = Path(os.path.join(dataset_root_path, dataset_name))
 
@@ -439,28 +443,28 @@ if __name__ == '__main__':
     # Define dataset path based on the input arguments
     ## faceforensic++
     if dataset_name == 'FaceForensics++':
-        sub_dataset_names = ["original_sequences/youtube","original_sequences/actors", \
+        sub_dataset_names = ["original_sequences/youtube", "original_sequences/actors", \
                              "manipulated_sequences/Deepfakes", \
-                            "manipulated_sequences/Face2Face", "manipulated_sequences/FaceSwap", \
-                            "manipulated_sequences/NeuralTextures","manipulated_sequences/FaceShifter",\
-                            "manipulated_sequences/DeepFakeDetection"]
+                             "manipulated_sequences/Face2Face", "manipulated_sequences/FaceSwap", \
+                             "manipulated_sequences/NeuralTextures", "manipulated_sequences/FaceShifter", \
+                             "manipulated_sequences/DeepFakeDetection"]
         sub_dataset_paths = [Path(os.path.join(dataset_path, name, comp)) for name in sub_dataset_names]
         # mask
         mask_dataset_names = ["manipulated_sequences/Deepfakes", "manipulated_sequences/Face2Face", \
-                            "manipulated_sequences/FaceSwap", "manipulated_sequences/NeuralTextures",\
-                            "manipulated_sequences/DeepFakeDetection"]
+                              "manipulated_sequences/FaceSwap", "manipulated_sequences/NeuralTextures", \
+                              "manipulated_sequences/DeepFakeDetection"]
         # mask_dataset_names = []
         mask_dataset_paths = [Path(os.path.join(dataset_path, name)) for name in mask_dataset_names]
     ## Celeb-DF-v1
     elif dataset_name == 'Celeb-DF-v1':
         sub_dataset_names = ['Celeb-real', 'Celeb-synthesis', 'YouTube-real']
         sub_dataset_paths = [Path(os.path.join(dataset_path, name)) for name in sub_dataset_names]
-    
+
     ## Celeb-DF-v2
     elif dataset_name == 'Celeb-DF-v2':
         sub_dataset_names = ['Celeb-real', 'Celeb-synthesis', 'YouTube-real']
         sub_dataset_paths = [Path(os.path.join(dataset_path, name)) for name in sub_dataset_names]
-    
+
     ## DFDCP
     elif dataset_name == 'DFDCP':
         sub_dataset_names = ['original_videos', 'method_A', 'method_B']
@@ -470,25 +474,40 @@ if __name__ == '__main__':
     elif dataset_name == 'DFDC':
         sub_dataset_names = ['test', 'train']
         # train dataset is too large, so we split it into 50 parts
-        sub_train_dataset_names = ["dfdc_train_part_" + str(i) for i in range(0,50)]
+        sub_train_dataset_names = ["dfdc_train_part_" + str(i) for i in range(0, 50)]
         sub_train_dataset_paths = [Path(os.path.join(dataset_path, 'train', name)) for name in sub_train_dataset_names]
         sub_dataset_paths = [Path(os.path.join(dataset_path, 'test'))] + sub_train_dataset_paths
-   
-   ## DeeperForensics-1.0
+
+    ## DeeperForensics-1.0
     elif dataset_name == 'DeeperForensics-1.0':
-        real_sub_dataset_names = ['source_videos/' + name for name in os.listdir(os.path.join(dataset_path, 'source_videos'))]
-        fake_sub_dataset_names = ['manipulated_videos/' + name for name in os.listdir(os.path.join(dataset_path, 'manipulated_videos'))]
+        real_sub_dataset_names = ['source_videos/' + name for name in
+                                  os.listdir(os.path.join(dataset_path, 'source_videos'))]
+        fake_sub_dataset_names = ['manipulated_videos/' + name for name in
+                                  os.listdir(os.path.join(dataset_path, 'manipulated_videos'))]
         real_sub_dataset_names.extend(fake_sub_dataset_names)
         sub_dataset_names = real_sub_dataset_names
         sub_dataset_paths = [Path(os.path.join(dataset_path, name)) for name in sub_dataset_names]
-        
+
     ## UADFV
     elif dataset_name == 'UADFV':
         sub_dataset_names = ['fake', 'real']
         sub_dataset_paths = [Path(os.path.join(dataset_path, name)) for name in sub_dataset_names]
+
+    ## FakeAVCeleb
+    elif dataset_name == 'FakeAVCeleb':
+        # df = pd.read_csv(f'{dataset_path}/FakeAVCeleb/meta_data.csv')
+        # video_paths = df['path'].tolist()
+        # video_names = df['filename'].tolist()
+        # combined = list(zip(video_paths, video_names))
+        # sub_dataset_paths = [Path(os.path.join(dataset_path, path, name)) for path, name in combined]
+
+        sub_dataset_names = ['FakeAVCeleb/FakeVideo-FakeAudio', 'FakeAVCeleb/FakeVideo-RealAudio',
+                             'FakeAVCeleb/RealVideo-FakeAudio', 'FakeAVCeleb/RealVideo-RealAudio']
+        sub_dataset_paths = [Path(os.path.join(dataset_path, name)) for name in sub_dataset_names]
+
     else:
         raise ValueError(f"Dataset {dataset_name} not recognized")
-    
+
     # Check if dataset path exists
     if not Path(dataset_path).exists():
         logger.error(f"Dataset path does not exist: {dataset_path}")
